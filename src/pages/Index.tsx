@@ -3,7 +3,9 @@ import ChatSidebar, { type Conversation } from "@/components/ChatSidebar";
 import ChatMessage, { type Message } from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import WelcomeScreen from "@/components/WelcomeScreen";
-import { Menu, X } from "lucide-react";
+import { streamChat } from "@/lib/streamChat";
+import { Menu } from "lucide-react";
+import { toast } from "sonner";
 
 const generateId = () => Math.random().toString(36).slice(2, 10);
 
@@ -42,7 +44,6 @@ const Index = () => {
       if (!convId) {
         convId = createConversation(content);
       } else {
-        // Update title if it's still "New Chat"
         setConversations((prev) =>
           prev.map((c) =>
             c.id === convId && c.title === "New Chat"
@@ -60,21 +61,48 @@ const Index = () => {
 
       setIsLoading(true);
 
-      // Simulate AI response (replace with real API call)
-      setTimeout(() => {
-        const aiMsg: Message = {
-          id: generateId(),
-          role: "assistant",
-          content: getSimulatedResponse(content),
-        };
-        setMessages((prev) => ({
-          ...prev,
-          [convId!]: [...(prev[convId!] || []), aiMsg],
-        }));
-        setIsLoading(false);
-      }, 1000 + Math.random() * 1500);
+      // Build message history for AI context
+      const currentMessages = messages[convId!] || [];
+      const apiMessages = [
+        ...currentMessages.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user" as const, content },
+      ];
+
+      let assistantContent = "";
+      const assistantId = generateId();
+
+      await streamChat({
+        messages: apiMessages,
+        onDelta: (chunk) => {
+          assistantContent += chunk;
+          setMessages((prev) => {
+            const msgs = prev[convId!] || [];
+            const lastMsg = msgs[msgs.length - 1];
+            if (lastMsg?.id === assistantId) {
+              return {
+                ...prev,
+                [convId!]: msgs.map((m) =>
+                  m.id === assistantId ? { ...m, content: assistantContent } : m
+                ),
+              };
+            }
+            return {
+              ...prev,
+              [convId!]: [
+                ...msgs,
+                { id: assistantId, role: "assistant", content: assistantContent },
+              ],
+            };
+          });
+        },
+        onDone: () => setIsLoading(false),
+        onError: (err) => {
+          toast.error(err);
+          setIsLoading(false);
+        },
+      });
     },
-    [activeId, createConversation]
+    [activeId, createConversation, messages]
   );
 
   const handleDelete = (id: string) => {
@@ -89,7 +117,6 @@ const Index = () => {
 
   return (
     <div className="flex h-screen overflow-hidden">
-      {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 md:hidden" onClick={() => setSidebarOpen(false)}>
           <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />
@@ -105,7 +132,6 @@ const Index = () => {
         </div>
       )}
 
-      {/* Desktop sidebar */}
       <ChatSidebar
         conversations={conversations}
         activeId={activeId}
@@ -114,9 +140,7 @@ const Index = () => {
         onDelete={handleDelete}
       />
 
-      {/* Main chat area */}
       <main className="flex-1 flex flex-col h-screen min-w-0">
-        {/* Header */}
         <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-sm">
           <button
             className="md:hidden p-1.5 rounded-lg hover:bg-secondary transition-colors"
@@ -131,7 +155,6 @@ const Index = () => {
           </h2>
         </header>
 
-        {/* Messages */}
         {activeMessages.length === 0 && !isLoading ? (
           <WelcomeScreen onSuggestion={handleSend} />
         ) : (
@@ -140,7 +163,7 @@ const Index = () => {
               {activeMessages.map((msg) => (
                 <ChatMessage key={msg.id} message={msg} />
               ))}
-              {isLoading && (
+              {isLoading && activeMessages[activeMessages.length - 1]?.role !== "assistant" && (
                 <div className="flex gap-3 px-4 py-4">
                   <div className="w-8 h-8 rounded-lg bg-chat-ai border border-border flex items-center justify-center">
                     <div className="flex gap-1">
@@ -160,22 +183,5 @@ const Index = () => {
     </div>
   );
 };
-
-function getSimulatedResponse(input: string): string {
-  const lower = input.toLowerCase();
-  if (lower.includes("workflow") || lower.includes("improve")) {
-    return "Here are some ways AI can improve your workflow:\n\n1. **Automate repetitive tasks** — Let AI handle data entry, scheduling, and email responses\n2. **Smart document analysis** — Extract key insights from reports and contracts instantly\n3. **Predictive analytics** — Forecast trends based on your historical data\n4. **Enhanced communication** — Draft professional emails, proposals, and reports\n\nWould you like me to dive deeper into any of these areas?";
-  }
-  if (lower.includes("security")) {
-    return "Our platform includes enterprise-grade security features:\n\n- 🔒 **End-to-end encryption** for all conversations\n- 🛡️ **SOC 2 Type II** compliance\n- 🔑 **Role-based access control** for team management\n- 📋 **Audit logs** for complete transparency\n- 🌐 **Data residency options** for regulatory compliance\n\nNeed more details on any specific security feature?";
-  }
-  if (lower.includes("proposal") || lower.includes("draft")) {
-    return "I'd be happy to help draft a business proposal! To create an effective one, I'll need:\n\n1. **Client/audience** — Who is this for?\n2. **Objective** — What problem are you solving?\n3. **Budget range** — Any financial parameters?\n4. **Timeline** — When does this need to be delivered?\n\nShare these details and I'll craft a professional proposal for you.";
-  }
-  if (lower.includes("sales") || lower.includes("data") || lower.includes("analyze")) {
-    return "I can help analyze your sales data! Here's what I can do:\n\n- 📊 **Trend analysis** — Identify patterns and seasonality\n- 📈 **Revenue forecasting** — Project future performance\n- 🎯 **Customer segmentation** — Group customers by behavior\n- ⚡ **Performance metrics** — Track KPIs and conversion rates\n\nPlease share your data or describe what you'd like to analyze, and I'll get started.";
-  }
-  return "That's a great question! I'm here to help with a wide range of business tasks including:\n\n- **Analysis & Research** — Market research, competitive analysis, data interpretation\n- **Content & Communication** — Emails, reports, presentations, proposals\n- **Strategy & Planning** — Business plans, project roadmaps, goal setting\n- **Problem Solving** — Process optimization, troubleshooting, brainstorming\n\nHow can I assist you specifically?";
-}
 
 export default Index;
